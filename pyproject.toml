@@ -41,7 +41,7 @@ rdchiral = "^1.0.0"
 openbabel-wheel = "^3.1.1"
 tables = "^3.6.1"
 tqdm = "^4.42.1"
-onnxruntime = "^1.23.0"
+onnxruntime = ">=1.23.0,<1.23.3"
 tensorflow = {version = "^2.20.0", optional=true}  
 grpcio = {version = "^1.24.0", optional=true}
 tensorflow-serving-api = {version = "^2.1.0", optional=true}
