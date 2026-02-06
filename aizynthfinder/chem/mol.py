@@ -5,11 +5,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
+import rdkit
 from rdkit import Chem, DataStructs
 from rdkit.Chem import AllChem, Descriptors
 
 from aizynthfinder.utils.bonds import sort_bonds
 from aizynthfinder.utils.exceptions import MoleculeException
+
+from openbabel import openbabel
 
 if TYPE_CHECKING:
     from aizynthfinder.utils.type_utils import (
@@ -22,7 +25,16 @@ if TYPE_CHECKING:
         Tuple,
         Union,
     )
+    
+# Silence OpenBabel warnings
+openbabel.obErrorLog.SetOutputLevel(openbabel.obError)
 
+# Create a single conversion object for efficiency
+_OB_CONV = openbabel.OBConversion()
+_OB_CONV.SetInAndOutFormats("smi", "inchikey")
+
+_OB_CONV_INCHI = openbabel.OBConversion()
+_OB_CONV_INCHI.SetInAndOutFormats("smi", "inchi")
 
 class Molecule:
     """
@@ -51,6 +63,18 @@ class Molecule:
             raise MoleculeException(
                 "Need to provide either a rdkit Mol object or smiles to create a molecule"
             )
+            
+        self.rdkit_version = int(rdkit.__version__.split('.')[0])
+        if self.rdkit_version <= 2024:
+            # Create a single conversion object for efficiency
+            self.OB_CONV = openbabel.OBConversion()
+            OB_CONV.SetInAndOutFormats("smi", "inchikey")
+
+            self.OB_CONV_INCHI = openbabel.OBConversion()
+            self.OB_CONV_INCHI.SetInAndOutFormats("smi", "inchi")
+        else:
+            self.OB_CONV = None
+            self.OB_CONV_INCHI = None
 
         if rd_mol:
             self.rd_mol = rd_mol
@@ -96,7 +120,12 @@ class Molecule:
         """
         if not self._inchi:
             self.sanitize(raise_exception=False)
-            self._inchi = Chem.MolToInchi(self.rd_mol)
+            # If the version year is before or in 2024, use Chem.MolToInchi
+            if self.rdkit_version <= 2024:
+                self._inchi = Chem.MolToInchi(self.rd_mol)
+            else:
+                # We use openbabel as a patch for rdkit versions missing this
+                self._inchi = _openbabel_mol_to_inchi(self.rd_mol)
             if self._inchi is None:
                 raise MoleculeException("Could not make InChI")
         return self._inchi
@@ -111,7 +140,12 @@ class Molecule:
         """
         if not self._inchi_key:
             self.sanitize(raise_exception=False)
-            self._inchi_key = Chem.MolToInchiKey(self.rd_mol)
+            # If the version year is before or in 2024, use Chem.MolToInchiKey
+            if self.rdkit_version <= 2024:
+                self._inchi_key = Chem.MolToInchiKey(self.rd_mol)
+            else:
+                # We use openbabel as a path for rdkit verions missing this
+                self._inchi_key = _openbabel_mol_to_inchi_key(self.rd_mol)
             if self._inchi_key is None:
                 raise MoleculeException("Could not make InChI key")
         return self._inchi_key
@@ -390,3 +424,39 @@ class UniqueMolecule(Molecule):
 def none_molecule() -> UniqueMolecule:
     """Return an empty molecule"""
     return UniqueMolecule(rd_mol=Chem.MolFromSmiles(""))
+
+
+def _openbabel_mol_to_inchi_key(mol: rdkit.Chem.Mol) -> str:
+    """Generate a real InChI key using OpenBabel.
+
+    Args:
+        mol: RDKit molecule object.
+
+    Returns:
+        Standard InChI key (27 characters, format: XXXXXXXXXXXXXX-XXXXXXXXXX-X).
+    """
+    smiles = rdkit.Chem.MolToSmiles(mol, isomericSmiles=True, canonical=True)
+
+    ob_mol = openbabel.OBMol()
+    _OB_CONV.ReadString(ob_mol, smiles)
+
+    inchi_key = _OB_CONV.WriteString(ob_mol).strip()
+    return inchi_key
+
+
+def _openbabel_mol_to_inchi(mol: rdkit.Chem.Mol) -> str:
+    """Generate a real InChI string using OpenBabel.
+
+    Args:
+        mol: RDKit molecule object.
+
+    Returns:
+        Standard InChI string.
+    """
+    smiles = rdkit.Chem.MolToSmiles(mol, isomericSmiles=True, canonical=True)
+
+    ob_mol = openbabel.OBMol()
+    _OB_CONV_INCHI.ReadString(ob_mol, smiles)
+
+    inchi = _OB_CONV_INCHI.WriteString(ob_mol).strip()
+    return inchi
